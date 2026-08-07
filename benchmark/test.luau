@@ -41,7 +41,7 @@ local function add(name: string, amount: number): number
 	local provideMethod = info.provideMethod ~= false
 	local method = provideMethod and "Disconnect" or nil
 	local total = 0
-
+	
 	for i = 1, amount do
 		local signal = Signal.new()
 		local conn = signal:Connect(function()
@@ -63,13 +63,10 @@ local function cleanup(name: string, amount: number): number
 	local cleanup = object[cleanName]
 	local provideMethod = info.provideMethod ~= false
 	local method = provideMethod and "Disconnect" or nil
-	
+
 	for i = 1, amount do
-		local signal = Signal.new()
-		local conn = signal:Connect(function()
-			
-		end)
-		add(object, conn, method)
+		local item = {Disconnect = function() end}
+		add(object, item, method)
 	end
 	
 	local t1 = os.clock()
@@ -101,5 +98,6 @@ end
 
 for name, _ in modules do
 	task.wait(3)
-	test(name, "cleanup", 100000)
+	test(name, "add", 100000)
 end
+
