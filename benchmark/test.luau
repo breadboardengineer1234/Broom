@@ -74,22 +74,12 @@ local function cleanup(name: string, amount: number): number
 	return os.clock() - t1
 end
 
-
 local tests = {
 	add = add,
 	cleanup = cleanup,
 }
 
 local function test(name: string, testName: string, amount: number)
-	local conns = {}
-	for i = 1, amount do
-		local signal = Signal.new()
-		local conn = signal:Connect(function()
-
-		end)
-		conns[i] = conn
-	end
-	
 	local testFunc = tests[testName]	
 	local duration = testFunc(name, amount)
 	local txt = string.format("[%s] [%s]: %.4fs", name, testName, duration)
@@ -98,6 +88,5 @@ end
 
 for name, _ in modules do
 	task.wait(3)
-	test(name, "add", 100000)
+	test(name, "cleanup", 100000)
 end
-
