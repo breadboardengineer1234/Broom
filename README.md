@@ -14,7 +14,7 @@ Super fast simple cleanup module
 
 | Cleanup Tool | Time Taken (s) | Broom Speedup
 |--------------------|------------------------|--------------------|
-| Janitor | 5.244 | 494.71x
-| Maid | 2.684 | 253.20x
-| Trove | .0196 | 1.84x
-| **Broom** | **.0106** | 1x
+| Janitor | 5.015 | 1475x
+| Maid | 2.665 | 783.82x
+| Trove | .0148 | 4.35x
+| **Broom** | **.0034** | 1x
