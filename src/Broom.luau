@@ -2,7 +2,7 @@
 --!native
 
 --[[
-[Broom] v0.1.0
+[Broom] v0.1.1
 u5eful's cleanup module
 Provided cleanup method takes priority over defaults
 Tables are checked for :Destroy and :Disconnect
@@ -211,6 +211,7 @@ local function new(): Broom
 		remove = remove,
 		cleanup = cleanup,
 		destroy = destroy,
+		linkToInstance = linkToInstance,
 	
 		_keyed = {},
 		_destroyable = {},
