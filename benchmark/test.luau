@@ -5,39 +5,62 @@ local Signal = require(packages.UsefulSignal)
 local Janitor = require(packages.Janitor)
 local Trove = require(packages.Trove)
 local Maid = require(packages.Maid)
+local Scythe = require(packages.Scythe)
+local ScytheScope = Scythe.scope()
 
 local modules = {
 	Broom = {
-		object = Broom.new(),
+		object = Broom,
 		add = "add",
 		cleanup = "cleanup",
 		provideMethod = false,
 	},
 	
 	Janitor = {
-		object = Janitor.new(),
+		object = Janitor,
 		add = "Add",
 		cleanup = "Cleanup",
 	},
 	
 	Trove = {
-		object = Trove.new(),
+		object = Trove,
 		add = "Add",
 		cleanup = "Clean",		
 	},
 	
 	Maid = {
-		object = Maid.new(),
+		object = Maid,
 		add = "GiveTask",
 		cleanup = "DoCleaning",
 	},
+	
+	Scythe = {
+		addMethod = function(_, object)
+			Scythe.add(ScytheScope, object)
+		end,
+		
+		cleanupMethod = function(_, object)
+			Scythe.clean(ScytheScope)
+		end,
+	},
+	
 }
 
 local function add(name: string, amount: number): number
 	local info = modules[name]
 	local object = info.object
+	if object then
+		object = object.new()
+	end
 	local addName = info.add
-	local add = object[addName]
+	local add
+	if info.addMethod then
+		add = info.addMethod
+		
+	else
+		add = object[addName]
+	end
+
 	local provideMethod = info.provideMethod ~= false
 	local method = provideMethod and "Disconnect" or nil
 	local total = 0
@@ -57,10 +80,27 @@ end
 local function cleanup(name: string, amount: number): number
 	local info = modules[name]
 	local object = info.object
+	if object then
+		object = object.new()
+	end
 	local addName = info.add
-	local add = object[addName]
+	
+	local add
+	if info.addMethod then
+		add = info.addMethod
+
+	else
+		add = object[addName]
+	end
+	
 	local cleanName = info.cleanup
-	local cleanup = object[cleanName]
+	local cleanup
+	if info.cleanupMethod then
+		cleanup = info.cleanupMethod
+	else
+		cleanup = object[cleanName]
+	end
+
 	local provideMethod = info.provideMethod ~= false
 	local method = provideMethod and "Disconnect" or nil
 
@@ -84,9 +124,37 @@ local function test(name: string, testName: string, amount: number)
 	local duration = testFunc(name, amount)
 	local txt = string.format("[%s] [%s]: %.4fs", name, testName, duration)
 	print(txt)
+	return duration
 end
 
-for name, _ in modules do
-	task.wait(3)
-	test(name, "cleanup", 100000)
+local function bench(count: number)
+	local addTimes = {}
+	local cleanupTimes = {}
+	
+	print("====Add Test====")
+	for name, _ in modules do
+		task.wait(3)
+		local duration = test(name, "add", count)
+		addTimes[name] = duration
+	end
+	
+	print("\n====Cleanup Test====")
+	task.wait(2)
+	
+	for name, _ in modules do
+		task.wait(3)
+		local duration = test(name, "cleanup", count)
+		cleanupTimes[name] = duration
+	end
+	
+	print("\n====Total Time====")
+	for name, _ in modules do
+		local total = addTimes[name] + cleanupTimes[name]
+		local txt = string.format("[%s] [%s]: %.4fs", name, "Total time", total)
+		print(txt)
+	end
 end
+
+task.wait(2)
+bench(100000)
+
