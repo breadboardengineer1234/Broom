@@ -2,7 +2,7 @@
 --!native
 
 --[[
-[Broom] v0.1.1
+[Broom] v0.1.2
 u5eful's cleanup module
 Provided cleanup method takes priority over defaults
 Tables are checked for :Destroy and :Disconnect
@@ -64,7 +64,7 @@ local function add<T>(self: Broom, object: T, methodName: string?, key: string?)
 		local isFunction = objType == "function"
 		local isThread = objType == "thread"
 		local callback
-		
+
 		if not (isFunction or isThread) then
 			if objType == "table" then
 				methodName = methodName or (object.Disconnect and "Disconnect") or (object.Destroy and "Destroy")
@@ -76,7 +76,7 @@ local function add<T>(self: Broom, object: T, methodName: string?, key: string?)
 			end	
 			callback = object[methodName]
 		end
-		
+
 		local entry = table.clone(keyedTemplate)
 		entry.object = object
 		entry.isFunction = isFunction
@@ -85,13 +85,13 @@ local function add<T>(self: Broom, object: T, methodName: string?, key: string?)
 		keyed[key] = entry
 		return object
 	end
-	
+
 	if methodName then
 		local entry = table.clone(customTemplate)
 		entry.object = object
 		entry.callback = object[methodName]
 		table.insert(self._custom, entry)
-		
+
 	elseif objType == "table" then
 		if object.Disconnect then
 			table.insert(self._connections, object)
@@ -100,19 +100,19 @@ local function add<T>(self: Broom, object: T, methodName: string?, key: string?)
 		else
 			warnMsg("No cleanup method found for object of type "..objType)
 		end
-		
+
 	elseif objType == "RBXScriptConnection" then
 		table.insert(self._connections, object)
-	
+
 	elseif objType == "thread" then
 		table.insert(self._threads, object)
-		
+
 	elseif objType == "Instance" then
 		table.insert(self._destroyable, object)
-	
+
 	elseif objType == "function" then
 		table.insert(self._callbacks, object)
-		
+
 	else
 		error(SOURCE.." Unsupported object", 2)
 	end
@@ -153,35 +153,35 @@ local function cleanup(self: Broom)
 	local callbacks = self._callbacks
 	local custom = self._custom
 	local keyed = self._keyed
-	
+
 	for _, object in destroyable do
 		object:Destroy()
 	end
 	table.clear(destroyable)
-	
+
 	for _, conn in conns do
 		conn:Disconnect()
 	end
 	table.clear(conns)
-	
+
 	for _, thread in threads do
-		if coroutine.status(thread) == "dead" then continue end
+		if coroutine.status(thread) ~= "suspended" then continue end
 		task.cancel(thread)
 	end
 	table.clear(threads)
-	
+
 	for _, callback in callbacks do
 		callback()
 	end
 	table.clear(callbacks)
-	
+
 	for _, entry in custom do
 		local object = entry.object
 		local callback = entry.callback
 		if callback then callback(object) end
 	end
 	table.clear(custom)
-	
+
 	for _, entry in keyed do
 		cleanEntry(entry)
 	end
@@ -212,14 +212,14 @@ local function new(): Broom
 		cleanup = cleanup,
 		destroy = destroy,
 		linkToInstance = linkToInstance,
-	
+
 		_keyed = {},
 		_destroyable = {},
 		_connections = {},
 		_threads = {},
 		_callbacks = {},
 		_custom = {},
-		
+
 		_linkConn = nil,
 	}
 end
