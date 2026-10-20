@@ -35,9 +35,9 @@ type BroomInternal = Broom & {
 
 const SOURCE = "[Broom]"
 const VERSION = "v0.2.0"
-const POOL_SIZE = 10
+const CACHE_SIZE = 10
 
-local pool = {} :: {Broom}
+local cache = {} :: {Broom}
 
 local function warnMsg(msg: string)
 	warn(`{SOURCE} {msg}\n{debug.traceback(nil, 2)}`)
@@ -189,9 +189,9 @@ local function destroy(self: Broom)
 	(self :: BroomInternal)._linkConn = nil
 	setmetatable(self, nil)
 	
-	local size = #pool
-	if size < POOL_SIZE then
-		pool[size + 1] = self
+	local size = #cache
+	if size < CACHE_SIZE then
+		cache[size + 1] = self
 	else
 		table.clear(self)
 	end
@@ -220,10 +220,10 @@ local Broom = {
 Broom.__index = Broom
 
 local function new(): Broom
-	local size = #pool
+	local size = #cache
 	if size > 0 then
-		local broom = pool[size]
-		pool[size] = nil
+		local broom = cache[size]
+		cache[size] = nil
 		return setmetatable(broom :: Broom, Broom) :: Broom
 	else
 		return setmetatable({
