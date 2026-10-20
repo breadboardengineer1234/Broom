@@ -1,0 +1,11 @@
+[package]
+name = "breadboardengineer1234/broom"
+description = "Ultra fast Janitor/Trove/Maid alternative"
+version = "0.2.0"
+license = "MIT"
+registry = "https://github.com/UpliftGames/wally-index"
+repository = "https://github.com/breadboardengineer1234/Broom"
+exclude = ["benchmarks", "README.md"]
+realm = "shared"
+
+[dependencies]
