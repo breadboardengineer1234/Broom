@@ -1,227 +1,235 @@
 --!optimize 2
---!native
+--!strict
 
 --[[
-[Broom] v0.1.2
-u5eful's cleanup module
-Provided cleanup method takes priority over defaults
-Tables are checked for :Destroy and :Disconnect
-Tweens default to :Destroy
-:pop removes without cleanup
-:remove removes with cleanup
+Broom cleanup module by u5eful:
+- Provided cleanup method takes priority over defaults
+- Tables are checked for :Disconnect, :Destroy, and :destroy
+- Tweens default to :Destroy
+- :pop removes without cleanup
+- :remove removes with cleanup
+- Duplicate objects not allowed when custom method is provided
+- Reentrant behavior undefined when keys are used (i.e. do not add during cleanup)
 
 For best performance:
--When a default is available, do not provide cleanup method
--Do not use keys
+- When a default is available, do not provide cleanup method
+- Do not use keys
 ]]
-
 export type Broom = {
-	add: <T>(self: Broom, object: T, methodName: string?, key: string?) -> T,
-	pop: (self: Broom, key: string) -> (),
-	remove: (self: Broom, key: string) -> (),
+	add: <T>(self: Broom, object: T & Task, methodName: string?, key: any) -> T,
+	addBulk: <T...>(self: Broom, T...) -> (),
+	pop: (self: Broom, key: any) -> (),
+	remove: (self: Broom, key: any) -> (),
 	cleanup: (self: Broom) -> (),
 	destroy: (self: Broom) -> (),
-	linkToInstance: (self: Broom, instance: Instance) -> (),
+	linkToInstance: (self: Broom, instance: Instance) -> RBXScriptConnection,
+}
+export type Custom = {Disconnect: (self: Custom) -> (), Destroy: (self: Custom) -> (), destroy: (self: Custom) -> ()} | any
+export type Task = RBXScriptConnection | Instance | thread | () -> () | Custom
+type BroomInternal = Broom & {
+	_keyed: {[any]: any}?,
+	_custom: {[Task]: string}?,
+	_tasks: {Task},
+	_linkConn: RBXScriptConnection?
 }
 
-type Entry = {
-	object: any,
-	callback: ((any) -> ())?,
-	isFunction: boolean,
-	isThread: boolean,
-}
+const SOURCE = "[Broom]"
+const VERSION = "v0.2.0"
+const POOL_SIZE = 10
 
-local SOURCE = "[Broom]"
-
-local typeToMethod = {
-	Instance = "Destroy",
-	RBXScriptConnection = "Disconnect",
-}
-
-local keyedTemplate = {
-	object = "whatever",
-	isFunction = false,
-	isThread = false,
-	callback = "whatever",
-}
-
-local customTemplate = {
-	object = "whatever",
-	callback = "whatever",
-}
+local pool = {} :: {Broom}
 
 local function warnMsg(msg: string)
-	warn(SOURCE.." "..msg.."\n".. debug.traceback(nil, 2))
+	warn(`{SOURCE} {msg}\n{debug.traceback(nil, 2)}`)
 end
 
-local function add<T>(self: Broom, object: T, methodName: string?, key: string?): T
-	local objType = typeof(object)
-	if key then
-		local keyed = self._keyed
-		if keyed[key] then
-			error(SOURCE.." Cannot add duplicate keys to the same Broom object", 2)
-		end
-		local isFunction = objType == "function"
-		local isThread = objType == "thread"
-		local callback
+local function storeCustom(self: BroomInternal, name: string, object: Task)
+	local custom = self._custom
+	if not custom then
+		custom = {}
+		self._custom = custom
+	elseif custom[object] ~= nil then
+		error(`{SOURCE} Unable to add object {object} with custom method {name}: object has already been added`, 2)
+	end
+	(custom :: any)[object] = name
+end
 
-		if not (isFunction or isThread) then
-			if objType == "table" then
-				methodName = methodName or (object.Disconnect and "Disconnect") or (object.Destroy and "Destroy")
-			else
-				methodName = methodName or typeToMethod[objType]
-			end
-			if not methodName then
-				warnMsg("No cleanup method found for object of type "..objType)
-			end	
-			callback = object[methodName]
+local function add<T>(self: Broom, object: T & Task, methodName: string?, key: any): T
+	if key ~= nil then
+		if methodName then
+			storeCustom(self :: BroomInternal, methodName, object)
 		end
-
-		local entry = table.clone(keyedTemplate)
-		entry.object = object
-		entry.isFunction = isFunction
-		entry.isThread = isThread
-		entry.callback = callback
-		keyed[key] = entry
+		local keyed = (self :: BroomInternal)._keyed
+		if not keyed then
+			keyed = {}
+			(self :: BroomInternal)._keyed = keyed
+			
+		elseif keyed[key] ~= nil then
+			error(`{SOURCE} Cannot add duplicate keys to the same Broom object`, 2)
+		end
+		(keyed :: any)[key] = object
 		return object
 	end
-
-	if methodName then
-		local entry = table.clone(customTemplate)
-		entry.object = object
-		entry.callback = object[methodName]
-		table.insert(self._custom, entry)
-
-	elseif objType == "table" then
-		if object.Disconnect then
-			table.insert(self._connections, object)
-		elseif object.Destroy then
-			table.insert(self._destroyable, object)
-		else
-			warnMsg("No cleanup method found for object of type "..objType)
-		end
-
-	elseif objType == "RBXScriptConnection" then
-		table.insert(self._connections, object)
-
-	elseif objType == "thread" then
-		table.insert(self._threads, object)
-
-	elseif objType == "Instance" then
-		table.insert(self._destroyable, object)
-
-	elseif objType == "function" then
-		table.insert(self._callbacks, object)
-
+	if methodName ~= nil then
+		storeCustom(self :: BroomInternal, methodName, object)
 	else
-		error(SOURCE.." Unsupported object", 2)
+		table.insert((self :: BroomInternal)._tasks, object)
 	end
 	return object
 end
 
-local function cleanEntry(entry: Entry)
-	local object = entry.object
-	local destroy = entry.callback
-
-	if entry.isFunction then 
-		object()		
-	elseif entry.isThread then
-		if coroutine.status(object) ~= "dead" then
-			task.cancel(object)
-		end		
-	elseif destroy then
-		destroy(object)
+local function addBulk<T...>(self: Broom, ...: T...)
+	local n = select("#", ...)
+	for i = 1, n do
+		local object = select(i, ...)
+		add(self, object)
 	end
 end
 
-local function pop(self: Broom, key: string)
-	self._keyed[key] = nil
+local function cleanCustom(self: BroomInternal, object: any): boolean
+	local custom = self._custom
+	if not custom then return false end
+	local methodName = custom[object]
+	if methodName then
+		object[methodName](object)
+		custom[object] = nil
+		return true
+	end
+	return false
 end
 
-local function remove(self: Broom, key: string)
-	local keyed = self._keyed
-	local entry = keyed[key]
-	if not entry then return end
-	cleanEntry(entry)
+local function removeCustom(self: BroomInternal, object: Task)
+	local custom = self._custom
+	if custom and custom[object] then
+		custom[object] = nil
+	end
+end
+
+local function cleanObject(self: BroomInternal, object: any)
+	local objType = typeof(object)	
+	if objType == "table" then
+		if object.Disconnect :: any then
+			object:Disconnect()		
+		elseif object.destroy :: any then
+			object:destroy()			
+		elseif object.Destroy :: any then
+			object:Destroy()
+		else
+			warnMsg(`Unable to cleanup {object}: missing cleanup method`)
+		end
+	
+	elseif objType == "RBXScriptConnection" then
+		object:Disconnect()
+
+	elseif objType == "Instance" then
+		object:Destroy()
+
+	elseif objType == "function" then
+		object()
+
+	elseif objType == "thread" then
+		if coroutine.status(object) == "suspended" then
+			task.cancel(object)
+		end
+		
+	else
+		warnMsg(`Unable to cleanup {object}: unsupported type {objType}`)
+	end
+end
+
+local function pop(self: Broom, key: any)
+	local keyed = (self :: BroomInternal)._keyed
+	if not keyed then return end
+	local object = keyed[key]
 	keyed[key] = nil
+	removeCustom(self :: BroomInternal, object)
+end
+
+local function remove(self: Broom, key: any)
+	local keyed = (self :: BroomInternal)._keyed
+	if not keyed then return end
+	local object = keyed[key]
+	if not object then return end
+	keyed[key] = nil
+	if not cleanCustom(self :: BroomInternal, object) then		
+		cleanObject(self :: BroomInternal, object)
+	end
 end
 
 local function cleanup(self: Broom)
-	local destroyable = self._destroyable
-	local conns = self._connections
-	local threads = self._threads
-	local callbacks = self._callbacks
-	local custom = self._custom
-	local keyed = self._keyed
-
-	for _, object in destroyable do
-		object:Destroy()
+	local keyed = (self :: BroomInternal)._keyed
+	if keyed then
+		for _, object in keyed do
+			if not cleanCustom(self :: BroomInternal, object) then
+				cleanObject(self :: BroomInternal, object)
+			end
+		end
+		table.clear(keyed)
 	end
-	table.clear(destroyable)
-
-	for _, conn in conns do
-		conn:Disconnect()
+	
+	local custom = (self :: BroomInternal)._custom
+	if custom then
+		for object, methodName in custom :: any do
+			object[methodName](object)
+		end
+		table.clear(custom)
 	end
-	table.clear(conns)
-
-	for _, thread in threads do
-		if coroutine.status(thread) ~= "suspended" then continue end
-		task.cancel(thread)
+	
+	local tasks = (self :: BroomInternal)._tasks
+	for _, object in (tasks) do
+		cleanObject(self :: BroomInternal, object)
 	end
-	table.clear(threads)
-
-	for _, callback in callbacks do
-		callback()
-	end
-	table.clear(callbacks)
-
-	for _, entry in custom do
-		local object = entry.object
-		local callback = entry.callback
-		if callback then callback(object) end
-	end
-	table.clear(custom)
-
-	for _, entry in keyed do
-		cleanEntry(entry)
-	end
-	table.clear(keyed)
+	table.clear(tasks)
 end
 
 local function destroy(self: Broom)
 	cleanup(self)
-	local linkConn = self._linkConn
+	local linkConn = (self :: BroomInternal)._linkConn
 	if linkConn then linkConn:Disconnect() end
-	table.clear(self)
+	(self :: BroomInternal)._linkConn = nil
+	setmetatable(self, nil)
+	
+	local size = #pool
+	if size < POOL_SIZE then
+		pool[size + 1] = self
+	else
+		table.clear(self)
+	end
 end
 
-local function linkToInstance(self: Broom, instance: Instance)
-	local currConn = self._linkConn
+local function linkToInstance(self: Broom, instance: Instance): RBXScriptConnection
+	local currConn = (self :: BroomInternal)._linkConn
 	if currConn then currConn:Disconnect() end
-	self._linkConn = instance.Destroying:Once(function()
-		self._linkConn = nil
+	local newConn = instance.Destroying:Once(function()
+		(self :: BroomInternal)._linkConn = nil
 		cleanup(self)
-	end)
+	end);
+	(self :: BroomInternal)._linkConn = newConn
+	return newConn
 end
+
+local Broom = {
+	add = add,
+	addBulk = addBulk,
+	remove = remove,
+	pop = pop,
+	cleanup = cleanup,
+	destroy = destroy,
+	linkToInstance = linkToInstance,
+}
+Broom.__index = Broom
 
 local function new(): Broom
-	return {
-		add = add,
-		pop = pop,
-		remove = remove,
-		cleanup = cleanup,
-		destroy = destroy,
-		linkToInstance = linkToInstance,
-
-		_keyed = {},
-		_destroyable = {},
-		_connections = {},
-		_threads = {},
-		_callbacks = {},
-		_custom = {},
-
-		_linkConn = nil,
-	}
+	local size = #pool
+	if size > 0 then
+		local broom = pool[size]
+		pool[size] = nil
+		return setmetatable(broom :: Broom, Broom) :: Broom
+	else
+		return setmetatable({
+			_tasks = {},
+		}, Broom) :: Broom
+	end
 end
 
 return {new = new}
